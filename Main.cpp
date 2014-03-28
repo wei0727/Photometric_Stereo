@@ -23,7 +23,7 @@ void normalColorMap(IplImage *img[6], Mat lights, IplImage *nImg, vector<vector<
 			Vec3d c(bMat.at<double>(2, 0), -bMat.at<double>(1, 0), bMat.at<double>(0, 0)) ;
 			if(norm(c)!=0)
 				c = c / norm(c) ;
-			nMap[row][col] = c ;
+			nMap[row][col] = Vec3d(c[2], c[1], c[0]) ;
 			c = (c+Vec3d(1, 1, 1))*255/2 ;
 			if(nonZero){
 				//cout << iMat << endl << bMat << endl ;
@@ -31,6 +31,113 @@ void normalColorMap(IplImage *img[6], Mat lights, IplImage *nImg, vector<vector<
 			cvSet2D(nImg, row, col, c) ;
 		}
 	}
+}
+
+void surfaceReconstruct(string fileName, vector<vector<Vec3d>> &nMap){
+	const int r = nMap.size() ;
+	const int c = nMap[0].size() ;
+	ofstream depthFile(fileName) ;
+	depthFile << 0.05 << endl ;
+	depthFile << r << endl ;
+	depthFile << c << endl ;
+	vector<vector<double>> heightField(r, vector<double>(c, 0.0)) ;
+	double integral_y=0, integral_x=0 ;
+	double dmax, dmin ;
+	dmax = dmin = 0 ;
+	//calculate depth
+	for(int row=1; row<r; row++){
+		if(nMap[row][0][2]!=0)
+			heightField[row][0] = heightField[row-1][0] + -nMap[row][0][1]/nMap[row][0][2] ;
+		else
+			heightField[row][0] = heightField[row-1][0] ;
+		dmax = std::max(dmax, heightField[row][0]) ;
+		dmin = std::min(dmin, heightField[row][0]) ;
+	}
+	for(int row=0; row<r; row++){
+		for(int col=1; col<c; col++){
+			if(nMap[row][col][2]!=0)
+				heightField[row][col] = heightField[row][col-1] + -nMap[row][col][0]/nMap[row][col][2] ;
+			else
+				heightField[row][col] = heightField[row][col-1] ;
+			dmax = std::max(dmax, heightField[row][col]) ;
+			dmin = std::min(dmin, heightField[row][col]) ;
+		}
+	}
+	//output depth to file
+	for(int row=0; row<r; row++){
+		for(int col=0; col<c; col++){
+			//background, |normal|=0 --> depth=0
+			if(norm(nMap[row][col])!=0)
+				//normalize depth to 0~5
+				depthFile << (heightField[row][col]-dmin)*5/(dmax-dmin) << " " ;
+			else
+				depthFile << 0 << " " ;
+		}
+		depthFile << endl ;
+	}
+	depthFile.close() ;
+}
+
+void surfaceReconstruct_lravg(string fileName, vector<vector<Vec3d>> &nMap){
+		const int r = nMap.size() ;
+	const int c = nMap[0].size() ;
+	ofstream depthFile(fileName) ;
+	depthFile << 0.05 << endl ;
+	depthFile << r << endl ;
+	depthFile << c << endl ;
+	vector<vector<double>> heightFieldR(r, vector<double>(c, 0.0)) ;
+	vector<vector<double>> heightFieldL(r, vector<double>(c, 0.0)) ;
+	double integral_y=0, integral_x=0 ;
+	double dmax, dmin ;
+	dmax = dmin = 0 ;
+	//calculate depth
+	for(int row=1; row<r; row++){
+		if(nMap[row][0][2]!=0)
+			heightFieldR[row][0] = heightFieldR[row-1][0] + -nMap[row][0][1]/nMap[row][0][2] ;
+		else
+			heightFieldR[row][0] = heightFieldR[row-1][0] ;
+		if(nMap[row][c-1][2]!=0)
+			heightFieldL[row][c-1] = heightFieldL[row-1][c-1] + -nMap[row][c-1][1]/nMap[row][c-1][2] ;
+		//dmax = std::max(dmax, heightFieldL[row][0]) ;
+		//dmin = std::min(dmin, heightFieldL[row][0]) ;
+	}
+	//left to right
+	for(int row=0; row<r; row++){
+		for(int col=1; col<c; col++){
+			if(nMap[row][col][2]!=0)
+				heightFieldL[row][col] = heightFieldL[row][col-1] + -nMap[row][col][0]/nMap[row][col][2] ;
+			else
+				heightFieldL[row][col] = heightFieldL[row][col-1] ;
+			//dmax = std::max(dmax, heightFieldL[row][col]) ;
+			//dmin = std::min(dmin, heightFieldL[row][col]) ;
+		}
+	}
+	//right to left
+	for(int row=0; row<r; row++){
+		for(int col=c-2; col>=0; col--){
+			if(nMap[row][col][2]!=0)
+				heightFieldR[row][col] = heightFieldR[row][col+1] + -nMap[row][col][0]/nMap[row][col][2] ;
+			else
+				heightFieldR[row][col] = heightFieldR[row][col+1] ;
+			heightFieldL[row][col] = (heightFieldL[row][col]+heightFieldR[row][col])/2 ;
+			dmax = std::max(dmax, heightFieldL[row][col]) ;
+			dmin = std::min(dmin, heightFieldL[row][col]) ;
+		}
+	}
+	//output depth to file
+	for(int row=0; row<r; row++){
+		for(int col=0; col<c; col++){
+			//background, |normal|=0 --> depth=0
+			if(norm(nMap[row][col])!=0)
+				//normalize depth to 0~5
+				depthFile << (heightFieldL[row][col]-dmin)*5/(dmax-dmin) << " " ;
+				//depthFile << heightFieldR[row][col] << " " ;
+			else
+				depthFile << 0 << " " ;
+		}
+		depthFile << endl ;
+	}
+	depthFile.close() ;
 }
 
 int main(){
@@ -53,6 +160,9 @@ int main(){
 	vector<vector<Vec3d>> nMap(img[0]->height, vector<Vec3d>(img[0]->width)) ;
 	normalColorMap(img, lights, nImg, nMap) ;
 
+	surfaceReconstruct("bunny_depth.txt", nMap) ;
+	surfaceReconstruct_lravg("bunny_depth_lravg.txt", nMap) ;
+
 	vector<vector<double>> heightField(nImg->height, vector<double>(nImg->width, 0.0)) ;
 	vector<vector<double>> pArr(nImg->height, vector<double>(nImg->width, 0.0)) ;
 	vector<vector<double>> qArr(nImg->height, vector<double>(nImg->width, 0.0)) ;
@@ -62,25 +172,6 @@ int main(){
 	depthFile << 0.05 << endl ;
 	depthFile << 120 << endl ;
 	depthFile << 120 << endl ;
-	double integral_y=0, integral_x=0 ;
-	/*
-	for(int row=0; row<nImg->height; row++){
-		if(row!=0){
-			//if(nMap[row][0][2]!=0)
-				integral_y += -nMap[row][0][1]/nMap[row][0][2] ;
-		}
-		integral_x = 0 ;
-		for(int col=0; col<nImg->width; col++){
-			if(col!=0)
-				//if(nMap[row][col][2]!=0)
-					integral_x += -nMap[row][col][0]/nMap[row][col][2] ;
-			heightField[row][col] = integral_y + integral_x ;
-			depthFile << heightField[row][col]/8.0 << " " ;
-		}
-		depthFile << endl ;
-	}
-	*/
-
 	for(int row=1; row<nImg->height; row++){
 		if(nMap[row][0][2]!=0)
 			heightField[row][0] = heightField[row-1][0] + -nMap[row][0][1]/nMap[row][0][2] ;
@@ -93,8 +184,6 @@ int main(){
 				heightField[row][col] = heightField[row][col-1] + -nMap[row][col][0]/nMap[row][col][2] ;
 			else
 				heightField[row][col] = heightField[row][col-1] ;
-				//if(abs(nMap[row][col][0]/nMap[row][col][2])>500)
-					//cout << nMap[row][col][0] << "\t" << nMap[row][col][2] << "\t" << (nMap[row][col][0]/nMap[row][col][2]) << endl ;
 			
 		}
 	}
@@ -123,7 +212,8 @@ int main(){
 	}
 	for(int row=0; row<nImg->height; row++){
 		for(int col=0; col<nImg->width; col++){
-			if(heightField[row][col]!=0)
+			//if(heightField[row][col]!=0)
+			if(norm(nMap[row][col])!=0)
 				depthFile << (heightField[row][col]-min)*5/(max-min) << " " ;
 			else
 				depthFile << 0 << " " ;
@@ -140,8 +230,10 @@ int main(){
 		for(int col=1; col<nImg->width; col++){
 			double dpdy = pArr[row][col]-pArr[row-1][col] ;
 			double dqdx = qArr[row][col]-qArr[row][col-1] ;
-			if(abs(dpdy-dqdx) > 1000){
-				cout << nMap[row][col][0] << "\t" << nMap[row][col][1] << "\t" << nMap[row][col][2] << endl ;
+			double tmp = dpdy-dqdx ;
+			tmp *= tmp ;
+			if(tmp > 10){
+				cout << tmp << endl ;
 				count++ ;
 			}
 		}
